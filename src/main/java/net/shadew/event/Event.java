@@ -23,6 +23,7 @@ package net.shadew.event;
 public class Event {
     private final EventType<?> type;
     private boolean cancelled = false;
+    private boolean propagationStopped = false;
 
     /**
      * Constructs an event instance for the given type.
@@ -148,13 +149,50 @@ public class Event {
     }
 
     /**
-     * Returns whether subsequent callbacks must still be invoked. By default, this returns always false unless the
-     * event is cancelled and the event type disabled propagation for cancelled events. This method may be overridden to
-     * provide a custom propagation strategy.
+     * Sets the propagation status of this event. This event must be propagation-stoppable.
+     *
+     * @param propagationStopped The propagation status.
+     * @throws IllegalStateException If this event is not propagation-stoppable. Trown even if the propagation status is
+     *                               attempted to be set to false while the event is not propagation-stoppable.
+     */
+    public void setPropagationStopped(boolean propagationStopped) {
+        if (!type.canStopPropagation())
+            throw new IllegalStateException("Event '" + type.getName() + "' cannot be stopped from propagation");
+
+        this.propagationStopped = propagationStopped;
+    }
+
+    /**
+     * Returns whether this event's propagation is stopped. When the event is not propagation-stoppable, this method
+     * returns false by definition.
+     */
+    public boolean isPropagationStopped() {
+        return propagationStopped;
+    }
+
+    /**
+     * Returns whether propagation of this event to other callbacks can be stopped.
+     */
+    public boolean canStopPropagation() {
+        return type.canStopPropagation();
+    }
+
+    /**
+     * Stops propagation of this event to other callbacks. This event must be propagation-stoppable.
+     *
+     * @throws IllegalStateException If this event is not propagation-stoppable.
+     */
+    public void stopPropagation() {
+        setPropagationStopped(true);
+    }
+
+    /**
+     * Returns whether subsequent callbacks must still be invoked. By default, this returns always true unless the
+     * event's propagation is stopped. This method may be overridden to provide a custom propagation strategy.
      */
     public boolean mustPropagate() {
-        if (type.doesPropagateWhenCancelled())
-            return true;
-        return !cancelled;
+        if (canStopPropagation())
+            return !isPropagationStopped();
+        return true;
     }
 }

@@ -63,8 +63,8 @@ public class EventTests {
     }
 
     @Test
-    void testCancelPropagate() {
-        EventType<Event> event = EventType.builder("test.cancel.propagate", Event.class).cancellable(true).build();
+    void testCancelTwoCallbacks() {
+        EventType<Event> event = EventType.builder("test.cancel.twocallbacks", Event.class).cancellable(true).build();
         Counter counter = new Counter(2);
 
         event.addCallback(evt -> {
@@ -81,20 +81,19 @@ public class EventTests {
     }
 
     @Test
-    void testCancelNopropagate() {
-        EventType<Event> event = EventType.builder("test.cancel.nopropagate", Event.class).cancellable(true).propagateWhenCancelled(false).build();
+    void testPropagate() {
+        EventType<Event> event = EventType.builder("test.nopropagate", Event.class).canStopPropagation(true).build();
         Counter counter = new Counter(1);
 
         event.addCallback(evt -> {
-            evt.cancel();
+            evt.stopPropagation();
             counter.count();
         });
         event.addCallback(evt -> {
-            assertTrue(evt.isCancelled());
-            counter.count();
+            counter.count(); // Not invoked
         });
 
-        assertTrue(event.trigger(Event::new).isCancelled());
+        assertTrue(event.trigger(Event::new).isPropagationStopped());
         counter.finish();
     }
 
@@ -144,6 +143,25 @@ public class EventTests {
         EventException exc = assertThrows(EventException.class, () -> event.trigger(Event::new));
         assertNotNull(exc.getCause());
         assertEquals("owo I'm an exception", exc.getCause().getMessage());
+    }
+
+    @Test
+    void testThrowExceptionHandlerMulti() {
+        EventType<Event> event = EventType.builder("test.exception.throw.multi", Event.class).exceptionHandler(EventType.THROW_EVENT_EXCEPTIONS).build();
+        Counter counter = new Counter(2);
+        event.addCallback(evt -> {
+            counter.count();
+            throw new Exception("owo I'm an exception");
+        });
+        event.addCallback(evt -> {
+            counter.count();
+            throw new Exception("owo I'm another exception");
+        });
+
+        EventException exc = assertThrows(EventException.class, () -> event.trigger(Event::new));
+        assertNotNull(exc.getCause());
+        assertEquals("owo I'm an exception", exc.getCause().getMessage());
+        counter.finish();
     }
 
     @Test

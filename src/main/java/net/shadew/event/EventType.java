@@ -27,7 +27,7 @@ public final class EventType<E extends Event> {
      * An {@link ExceptionHandler} that wraps the exception in an {@link EventException} and throws that.
      */
     public static final ExceptionHandler<Event> THROW_EVENT_EXCEPTIONS = (type, exc) -> {
-        throw new EventException("Exception while invoking event '" + type.getName() + "'", exc);
+        throw exc;
     };
 
     /**
@@ -48,14 +48,14 @@ public final class EventType<E extends Event> {
     private final String name;
     private final ExceptionHandler<? super E> excHandler;
     private final boolean cancellable;
-    private final boolean propagateWhenCancelled;
+    private final boolean propagationStoppable;
 
     private EventType(Builder<E> builder) {
         this.cls = builder.cls;
         this.name = builder.name;
         this.excHandler = builder.exceptionHandler == null ? THROW_EVENT_EXCEPTIONS : builder.exceptionHandler;
         this.cancellable = builder.cancellable;
-        this.propagateWhenCancelled = builder.propagateWhenCancelled;
+        this.propagationStoppable = builder.propagationStoppable;
     }
 
     /**
@@ -70,12 +70,28 @@ public final class EventType<E extends Event> {
         if (event.getType() != this)
             throw new IllegalArgumentException("Cannot invoke with event of incorrect type");
 
+        EventException thrownExc = null;
+
         synchronized (this) {
             for (Callback<? super E> fn : callbacks) {
                 try {
                     fn.handle(event);
                 } catch (Throwable exc) {
-                    excHandler.handleException(event, exc);
+                    try {
+                        excHandler.handleException(event, exc);
+                    } catch (Throwable e) {
+                        if (thrownExc == null) {
+                            EventException eventExc;
+                            if (e instanceof EventException ee) {
+                                eventExc = ee;
+                            } else {
+                                eventExc = new EventException("Exception while invoking event '" + name + "'", e);
+                            }
+                            thrownExc = eventExc;
+                        } else {
+                            thrownExc.addSuppressed(e);
+                        }
+                    }
                 }
 
                 if (!event.mustPropagate()) {
@@ -83,6 +99,9 @@ public final class EventType<E extends Event> {
                 }
             }
         }
+
+        if (thrownExc != null)
+            throw thrownExc;
 
         return event;
     }
@@ -101,7 +120,8 @@ public final class EventType<E extends Event> {
     }
 
     /**
-     * Adds a callback to this event. If the callback is already added, this method does nothing.
+     * Adds a callback to this event. Callbacks are invoked in the order that they are added. If the callback is already
+     * added, this method moves the callback to the end of the invocation order.
      *
      * @param callback The callback to add.
      * @throws NullPointerException If the provided callback is null.
@@ -110,6 +130,7 @@ public final class EventType<E extends Event> {
         if (callback == null)
             throw new NullPointerException("Null callback");
 
+        callbacks.remove(callback); // Remove if present so it's added at the end of the linked set
         callbacks.add(callback);
     }
 
@@ -146,8 +167,8 @@ public final class EventType<E extends Event> {
     /**
      * Returns whether other callbacks are invoked after a callback cancels this event.
      */
-    public boolean doesPropagateWhenCancelled() {
-        return propagateWhenCancelled;
+    public boolean canStopPropagation() {
+        return propagationStoppable;
     }
 
     /**
@@ -160,7 +181,7 @@ public final class EventType<E extends Event> {
          * @param event The event that occurred.
          * @param exc   The exception that was thrown.
          */
-        void handleException(E event, Throwable exc);
+        void handleException(E event, Throwable exc) throws Throwable;
     }
 
     /**
@@ -182,7 +203,7 @@ public final class EventType<E extends Event> {
         private final Class<E> cls;
 
         private boolean cancellable = false;
-        private boolean propagateWhenCancelled = true;
+        private boolean propagationStoppable = false;
         private ExceptionHandler<? super E> exceptionHandler = THROW_EVENT_EXCEPTIONS;
 
         Builder(String name, Class<E> cls) {
@@ -199,11 +220,10 @@ public final class EventType<E extends Event> {
         }
 
         /**
-         * Sets whether subsequent callbacks must be invoked after an event was cancelled. Applies only to cancellable
-         * events.
+         * Sets whether a callback may prevent subsequent callbacks from being invoked.
          */
-        public Builder<E> propagateWhenCancelled(boolean propagateWhenCancelled) {
-            this.propagateWhenCancelled = propagateWhenCancelled;
+        public Builder<E> canStopPropagation(boolean propagationStoppable) {
+            this.propagationStoppable = propagationStoppable;
             return this;
         }
 
